@@ -47,8 +47,8 @@ class Cambiatransportistaspringamazon extends Module
 
         parent::__construct();
 
-        $this->displayName = $this->l('Cambia Transportista de Spring en pedidos Amazon / Estado Vendido sin Stock');
-        $this->description = $this->l('Cambia Transportista de Spring TRACKED a Spring SIGNATURED en pedidos Amazon de valor superior a una cantidad fijada (más de 30€). También cambia el estado de Pago aceptado a Verificando Stock "PS_OS_OUTOFSTOCK_PAID" los pedidos Amazon de productos vendidos sin stock.');
+        $this->displayName = $this->l('Cambia Transportista de Spring en pedidos Amazon');
+        $this->description = $this->l('Cambia Transportista de Spring TRACKED a Spring SIGNATURED en pedidos Amazon de valor superior a una cantidad fijada (más de 30€)');
 
         $this->confirmUninstall = $this->l('¿Deseas desinstalar este módulo de verdad?');
 
@@ -62,21 +62,17 @@ class Cambiatransportistaspringamazon extends Module
     public function install()
     {
         Configuration::updateValue('CAMBIATRANSPORTISTASPRINGAMAZON_LIVE_MODE', false);
-        Configuration::updateValue('CAMBIATRANSPORTISTASPRINGAMAZON_PAGADO_LIMITE', false);
-        Configuration::updateValue('CAMBIATRANSPORTISTASPRINGAMAZON_CAMBIO_ESTADO', false);
 
         return parent::install() &&
             $this->registerHook('header') &&
-            $this->registerHook('backOfficeHeader') && 
-            $this->registerHook('actionObjectOrderCarrierAddAfter') && //hook que se llama después de la creación del objeto OrderCarrier
-            $this->registerHook('actionOrderStatusPostUpdate');  //hook que se llama después de un cambio de estado de pedido
+            $this->registerHook('backOfficeHeader') && //hook que se llama después de la creación del objeto OrderCarrier
+            $this->registerHook('actionObjectOrderCarrierAddAfter');
     }
 
     public function uninstall()
     {
         Configuration::deleteByName('CAMBIATRANSPORTISTASPRINGAMAZON_LIVE_MODE');
         Configuration::deleteByName('CAMBIATRANSPORTISTASPRINGAMAZON_PAGADO_LIMITE');
-        Configuration::deleteByName('CAMBIATRANSPORTISTASPRINGAMAZON_CAMBIO_ESTADO');
 
         return parent::uninstall();
     }
@@ -166,26 +162,7 @@ class Cambiatransportistaspringamazon extends Module
                         'desc' => $this->l('Introduce el valor del pedido a partir del cual se cambiará el transportista de dicho pedido. Si el destino es Francia siempre se asigna SIGNATURED'),
                         'name' => 'CAMBIATRANSPORTISTASPRINGAMAZON_PAGADO_LIMITE',
                         'label' => $this->l('Total Pagado'),
-                    ),  
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Cambiar pedidos Amazon vendidos sin stock de Pago Aceptado a Verificando Stock'),
-                        'name' => 'CAMBIATRANSPORTISTASPRINGAMAZON_CAMBIO_ESTADO',
-                        'is_bool' => true,
-                        'desc' => $this->l('Los pedidos aceptados en Amazon cuyo contenido son productos con stock "forzado" entrarán por defecto en Pago Aceptado, seleccionando SI se cambiará su estado a Verificando Stock (Sin stock Pagado)'),
-                        'values' => array(
-                            array(
-                                'id' => 'active_on',
-                                'value' => true,
-                                'label' => $this->l('Enabled')
-                            ),
-                            array(
-                                'id' => 'active_off',
-                                'value' => false,
-                                'label' => $this->l('Disabled')
-                            )
-                        ),
-                    ),                  
+                    ),                    
                 ),
                 'submit' => array(
                     'title' => $this->l('Save'),
@@ -201,8 +178,7 @@ class Cambiatransportistaspringamazon extends Module
     {
         return array(
             'CAMBIATRANSPORTISTASPRINGAMAZON_LIVE_MODE' => Configuration::get('CAMBIATRANSPORTISTASPRINGAMAZON_LIVE_MODE'),
-            'CAMBIATRANSPORTISTASPRINGAMAZON_PAGADO_LIMITE' => Configuration::get('CAMBIATRANSPORTISTASPRINGAMAZON_PAGADO_LIMITE'),             
-            'CAMBIATRANSPORTISTASPRINGAMAZON_CAMBIO_ESTADO' => Configuration::get('CAMBIATRANSPORTISTASPRINGAMAZON_CAMBIO_ESTADO'),            
+            'CAMBIATRANSPORTISTASPRINGAMAZON_PAGADO_LIMITE' => Configuration::get('CAMBIATRANSPORTISTASPRINGAMAZON_PAGADO_LIMITE'),            
         );
     }
 
@@ -226,8 +202,6 @@ class Cambiatransportistaspringamazon extends Module
                     Configuration::updateValue($key, $pagado_limite);
                 }
 
-            } elseif ($key == 'CAMBIATRANSPORTISTASPRINGAMAZON_CAMBIO_ESTADO'){
-                Configuration::updateValue($key, Tools::getValue($key));
             }            
         }
     }
@@ -413,103 +387,4 @@ class Cambiatransportistaspringamazon extends Module
             }
         }
     }
-
-    //07/03/2023 Añadimos hook para cazar los pedidos amazon que contienen productos vendidos sin stock. La configuración del módulo solo permite esatblecer un estado de entrada de pedidos completos, Pago Aceptado en este caso, pero si enviamos y vendemos productos con stock "forzado" entran en prestashop en el mismo estado. Con este hook comprobamos si un pedido entrante en estado pago aceptado es de amazon y si lo es comprobamos si los productos tienen stock suficiente. Si no es así lo pasamos a verificando stock (out of stock paid)
-    public function hookActionOrderStatusPostUpdate($params)  {
-        //Comprobamos la configuración del módulo, si está activo para el cambio de estado
-        if (!Configuration::get('CAMBIATRANSPORTISTASPRINGAMAZON_CAMBIO_ESTADO')){
-            return;
-        }
-
-        //El hook funcionará cada vez que entra un nuevo pedido.
-        if ($params) {
-            $id_order = (int)$params['id_order'];
-            $newOrderStatus = $params['newOrderStatus'];
-            $id_employee = $params['id_employee'];
-            // $oldOrderStatus = $params['oldOrderStatus'];            
-            // $orderHistory = $params['orderHistory'];
-
-            //para este proceso el pedido tiene que entrar en Pago Aceptado
-            if ((int)$newOrderStatus->id !== (int)Configuration::get('PS_OS_PAYMENT')) {
-                return;
-            }
-
-            $order = new Order($id_order);
-
-            if (!Validate::isLoadedObject($order)) {
-                return;
-            }
-
-            //comprobamos primero que sea un pedido de amazon internacional
-            if ($order->module != 'amazon') {
-                return;
-            }
-
-            //el pedido es Amazon y entra en Pago Aceptado. Tenemos que comprobar si el/los productos que contiene tienen stock suficiente disponible. Para ello llamamos a la función checkOrderStock() que devolverá true o false
-            if ($this->checkOrderStock($order)) {
-                //hay stock suficiente, se queda en pago aceptado
-                return;
-            }
-
-            //no hay stock suficiente, pasamos el pedido a Verificando Stock / Sin Stock Pagado
-            $id_verificando_stock = (int)Configuration::get('PS_OS_OUTOFSTOCK_PAID');
-
-            $new_history = new OrderHistory();
-            $new_history->id_order = $id_order;
-            $new_history->id_employee = $id_employee;
-            $use_existing_payment = !$order->hasInvoice();
-            $new_history->changeIdOrderState($id_verificando_stock, $id_order, $use_existing_payment);
-            // $history->addWithemail();
-            $new_history->add(true);
-            $new_history->save(); 
-
-            //hacemos un LOG
-            $estado_inicial = (int)$newOrderStatus->id;
-
-            $insert_frik_pedidos_cambiados = "INSERT INTO frik_pedidos_cambiados 
-            (id_order, estado_inicial, estado_final, proceso, date_add) 
-            VALUES ($id_order ,
-            $estado_inicial ,
-            $id_verificando_stock ,            
-            'A Verificando Stock - Amazon Sin Stock - Automático',
-            NOW())";
-
-            if (Db::getInstance()->Execute($insert_frik_pedidos_cambiados)) {
-                return;
-            } 
-
-            return;
-        }
-    }
-
-    //función que devuelve true o false en función de si el pedido entrante dispone de stock suficiente disponible para todos sus productos.
-    public function checkOrderStock($order)  {
-        //como el pedido ya está dentro de Prestashop no vale comprobar los datos del carrito, hay que sacar orderdetail y comprobar el campo product_quuantity_in_stock. Amazon establece ese campo al crear el pedido de forma diferente a Prestashop. En prestashop es 
-        //$product_quantity = (int)Product::getQuantity($this->product_id, $this->product_attribute_id);
-        //$this->product_quantity_in_stock = ($product_quantity - (int)$product['cart_quantity'] < 0) ? $product_quantity : (int)$product['cart_quantity'];
-        //Es decir, al stock disponible (total) se le restan las unidades del carrito, si da negativo se pone el stock disponible, si no es negativo se pone la cantidad en carrito.
-        //el módulo de Amazon (y mirakl creo) hace:
-        //$productQuantity = Product::getRealQuantity($id_product, $id_product_attribute, $id_warehouse, $order->id_shop);
-        //$quantityInStock = $productQuantity - $product['cart_quantity'];
-        //$order_detail->product_quantity_in_stock = (int)$quantityInStock;
-        //Es decir, obtiene el stock real, que es real qty = actual qty in stock - current client orders + current supply orders, a eso le resta la cantidad en carrito, es decir, si el producto no tiene stock dará negativo al entrar el pedido. Puede haber errores provocados por tener el producto en pedidos de materiales¿?
-
-        //sacamos los datos de productos en pedido, esto deveulve básicamente el contenido de order_detail, product y product_shop para los productos del pedido
-        $order_products = $order->getProducts(); 
-
-        foreach ($order_products as $order_product){ 
-            //si el producto no está en gestión avanzada, pasamos al siguiente
-            if (!StockAvailableCore::dependsOnStock($order_product['product_id'])){                
-                continue;
-            }           
-
-            //si algún producto tiene valor negativo en product_quantity_in_stock es que debe entrar en Verificando stock (para pedidos creados con módulo de amazon, prestashop es diferente)
-            if ($order_product['product_quantity_in_stock'] < 0) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
 }
