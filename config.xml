@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+	<name>cambiatransportistaspringamazon</name>
+	<displayName><![CDATA[Cambia Transportista de Spring en pedidos Amazon]]></displayName>
+	<version><![CDATA[1.0.0]]></version>
+	<description><![CDATA[Cambia Transportista de Spring TRACKED a Spring SIGNATURED en pedidos Amazon de valor superior a una cantidad fijada (más de 30€)]]></description>
+	<author><![CDATA[Sergio]]></author>
+	<tab><![CDATA[administration]]></tab>
+	<is_configurable>1</is_configurable>
+	<need_instance>1</need_instance>
+</module>
